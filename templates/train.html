@@ -1,0 +1,51 @@
+<section class="choo-choo-train">
+  <p class="choo-choo-instructions">Drag the handles to change the order. Move the first token on the canvas to make the rest follow.</p>
+
+  <div class="choo-choo-toolbar">
+    <label>
+      Train:
+      <select id="choo-choo-train-select">
+        {{#each trains}}
+          <option value="{{this.id}}">{{this.name}}</option>
+        {{/each}}
+      </select>
+    </label>
+    <button type="button" class="button choo-choo-create" title="Create a new train from currently selected tokens">New Train</button>
+    <button type="button" class="button choo-choo-delete" title="Remove the selected train">Delete</button>
+  </div>
+
+  {{#if hasTrains}}
+    <div class="choo-choo-train-settings">
+      <label>
+        Name:
+        <input class="choo-choo-name" type="text" value="{{selectedTrain.name}}" />
+      </label>
+
+      <label class="choo-choo-link-wrap">
+        <input class="choo-choo-link" type="checkbox" {{#if selectedTrain.linked}}checked{{/if}} />
+        Linked (move leader → followers follow)
+      </label>
+    </div>
+
+    {{#if selectedTrain.tokens.length}}
+      <ul id="choo-choo-train-list" class="choo-choo-list">
+        {{#each tokens}}
+          <li data-id="{{this.id}}">
+            <span class="handle" title="Drag to reorder"><i class="fas fa-grip-lines"></i></span>
+            <img src="{{this.img}}" alt="{{this.name}}" />
+            <span class="name">{{this.name}}</span>
+          </li>
+        {{/each}}
+      </ul>
+    {{else}}
+      <p class="choo-choo-empty">This train has no tokens. Select tokens on the canvas and create a new train or reorder.</p>
+    {{/if}}
+
+    <div class="choo-choo-actions">
+      <button type="button" class="button choo-choo-ping">Ping Leader</button>
+      <button type="button" class="button choo-choo-clear">Clear All Trains</button>
+    </div>
+  {{else}}
+    <p class="choo-choo-empty">No trains exist yet. Select tokens on the canvas and click “New Train”.</p>
+  {{/if}}
+</section>

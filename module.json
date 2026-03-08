@@ -1,0 +1,28 @@
+{
+  "id": "choo-choo",
+  "title": "Choo Choo",
+  "description": "Allows you to create a train of tokens that can be moved around the map together.",
+  "authors": [
+    {
+      "name": "Alan Waiss"
+    }
+  ],
+  "version": "0.1.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    }
+  ],
+  "styles": [
+    "styles/choo-choo.css"
+  ],
+  "esmodules": [
+    "scripts/main.js"
+  ]
+}
