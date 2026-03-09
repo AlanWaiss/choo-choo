@@ -1,5 +1,6 @@
 import * as Constants from './constants.js';
 import * as Logger from './logger.js';
+import { removeListItem } from './utils.js';
 
 const FLAG_TRAIN = 'train';
 const FLAG_TRAIN_ID = 'trainId';
@@ -30,11 +31,19 @@ async function _refreshTokenTrainFlags(scene, trains) {
 
 	const updates = [];
 	for(const token of canvas.tokens.placeables) {
-		const current = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+		const tokenDocument = token.document || token;
+		if(!tokenDocument?.getFlag)
+			continue;
+
+		const current = tokenDocument.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
 		const next = tokenToTrainId.get(token.id) ?? null;
-		if (current === next) continue;
-		if (next) updates.push(token.setFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID, next));
-		else updates.push(token.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID));
+		if(current === next)
+			continue;
+
+		if(next)
+			updates.push(tokenDocument.setFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID, next));
+		else
+			updates.push(tokenDocument.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID));
 	}
 
 	await Promise.all(updates);
@@ -54,11 +63,34 @@ function _getDefaultTrainName(scene) {
 	return `Train ${trains.length + 1}`;
 }
 
-function _createTrainForSelection(scene) {
-	const controlled = canvas.tokens.controlled;
-	if (!controlled.length) return null;
+async function _createTrainForSelection(scene, trains, tokens) {
+	tokens ||= canvas.tokens.controlled;
+	if((tokens?.length || 0) <= 1)
+		return null;
 
-	const tokenIds = controlled.map((t) => t.id);
+	trains ||= _getTrains(scene);
+
+	const tokenIds = tokens.map((t) => t.id),
+		emptyTrains = [],
+		tasks = [];
+	let sort = tokens.length;
+
+	for(const token of tokens) {
+		const id = token.id;
+		for(const train of trains) {
+			if(train.tokens?.includes(id) && removeListItem(train.tokens, id).length === 0) {
+				emptyTrains.push(train);
+			}
+		}
+		tasks.push(token.document.update({sort: sort--}));
+	}
+	
+	for(const train of emptyTrains) {
+		removeListItem(trains, train);
+	}
+
+	await Promise.all(tasks);
+
 	const train = {
 		id: _makeTrainId(),
 		name: _getDefaultTrainName(scene),
@@ -66,7 +98,6 @@ function _createTrainForSelection(scene) {
 		linked: true,
 	};
 
-	const trains = _getTrains(scene);
 	trains.push(train);
 	return trains;
 }
@@ -75,27 +106,76 @@ function _createTrainForSelection(scene) {
  * Move the tokens in a train when the leader moves.
  * The leader is always the first token in the train's `tokens` array.
  */
-Hooks.on('updateToken', async (scene, token, diff, options, userId) => {
+Hooks.on('updateToken', async (token, diff, options, userId) => {
 	try {
-		if (options?._chooChoo) return; // Avoid recursion while moving trailing tokens
-		if (!diff.x && !diff.y) return; // ignore non-position updates
+		if(options?._chooChoo)
+			return; // Avoid recursion while moving trailing tokens
 
-		const trains = _getTrains(scene);
-		if (!trains?.length) return;
+		if("number" !== typeof diff.x && "number" !== typeof diff.y)
+			return; // ignore non-position updates
+
+		const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+		if(!trainId)
+			return;
+
+		const trains = _getTrains(canvas.scene);
+		if(!trains?.length)
+			return;
 
 		const train = trains.find((t) => t.tokens?.[0] === token.id && t.linked);
-		if (!train) return;
+		if(!train)
+			return;
 
-		const oldX = token.x - (diff.x ?? 0);
-		const oldY = token.y - (diff.y ?? 0);
-		let prevPosition = { x: oldX, y: oldY };
+		//region 1:	Scene.9tOvj5gptoWt7M8o.Region.YCELc50KLJ2ng7Km
+		//region 2:	Scene.9tOvj5gptoWt7M8o.Region.XYxVxNmCIybNB60k
+		//exit:		Scene.9tOvj5gptoWt7M8o.Region.al5eXbfVNf1b81Zt
+		//Bookstore 1:	Scene.gFJ0yFwUB34Fwot0.Region.RSQX9j9sxhti1SkB
+		const gridSize = canvas.grid.size;
+		const regionId = diff._regions && diff._regions[0];
+		let prevPosition = { x: token.x, y: token.y };
+		//TODO: Detect teleportation and move them all to the same position
 
-		for (let i = 1; i < train.tokens.length; i++) {
+		let teleportAll;
+		if(regionId) {
+			const region = canvas.scene.regions.get(regionId);
+			if(!region) {
+				//Theoretically, moving to the trigger of the teleport should teleport them all at once
+				teleportAll = (following) => following.document.update({ x: prevPosition.x, y: prevPosition.y }, {
+					_chooChoo: true
+				});
+			}
+			else if(region.behaviors.find((behavior) => behavior.type === "teleportToken" && !behavior.disabled)) {
+				const newPosition = {
+					x: "number" === typeof diff.x ? diff.x : token.x,
+					y: "number" === typeof diff.y ? diff.y : token.y,
+				};
+				teleportAll = (following) => following.document.update(newPosition, {
+					_chooChoo: true,
+					animate: false
+				});
+			}
+		}
+
+		for(let i = 1; i < train.tokens.length; i++) {
 			const id = train.tokens[i];
 			const following = canvas.tokens.get(id);
-			if (!following) continue;
+			if(!following)
+				continue;
+
+			if(teleportAll) {
+				await teleportAll(following);
+				continue;
+			}
+
 			const currentPos = { x: following.x, y: following.y };
-			await following.document.update({ x: prevPosition.x, y: prevPosition.y }, { _chooChoo: true });
+			if(currentPos.x === prevPosition.x && currentPos.y === prevPosition.y)
+				continue;	// If they're in the same position, skip it this move, then catch up on the next.
+
+			const teleport = Math.abs(prevPosition.x - currentPos.x) > gridSize || Math.abs(prevPosition.y - currentPos.y) > gridSize;
+			await following.document.update({ x: prevPosition.x, y: prevPosition.y }, {
+				 _chooChoo: true,
+				animate: !teleport
+			});
 			prevPosition = currentPos;
 		}
 	} catch (err) {
@@ -103,13 +183,26 @@ Hooks.on('updateToken', async (scene, token, diff, options, userId) => {
 	}
 });
 
+Hooks.on('createToken', async (token, options, userId) => {
+	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+	console.log("train.createToken", { token, options, userId, trainId });
+});
+
+Hooks.on('deleteToken', async (token, options, userId) => {
+	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+	console.log("train.deleteToken", { token, options, userId, trainId });
+});
+
 Hooks.on('canvasReady', () => {
 	const scene = canvas.scene;
-	if (!scene) return;
+	if(!scene)
+		return;
+
 	_refreshTokenTrainFlags(scene, _getTrains(scene));
 });
 
 Hooks.on('renderToken', (token, html) => {
+	console.log("train.renderToken", token, html);
 	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
 	if (!trainId) return;
 
@@ -117,7 +210,7 @@ Hooks.on('renderToken', (token, html) => {
 	html.append('<div class="choo-choo-token-indicator" title="In train"></div>');
 });
 
-export async function createTrain() {
+export async function createTrain(tokens) {
 	const scene = canvas.scene;
 	if (!scene) {
 		ui.notifications.warn('No active scene');
@@ -125,13 +218,12 @@ export async function createTrain() {
 	}
 
 	const trains = _getTrains(scene);
-	const newTrains = _createTrainForSelection(scene);
+	const newTrains = await _createTrainForSelection(scene, trains, tokens);
 	if (newTrains) {
 		await _setTrains(scene, newTrains);
 	}
 
-	TrainManagerApp.instance?.render(true);
-	new TrainManagerApp().render(true);
+	openTrainManager();
 }
 
 class TrainManagerApp extends Application {
@@ -194,11 +286,11 @@ class TrainManagerApp extends Application {
 
 		html.find('#choo-choo-train-select').on('change', (event) => this._onSelectTrain(event));
 
-		const list = html.find('#choo-choo-train-list');
+		/*const list = html.find('#choo-choo-train-list');
 		list.sortable({
 			handle: '.handle',
 			update: () => this._onOrderChanged(html),
-		});
+		});*/
 
 		html.find('.choo-choo-clear').on('click', () => this._onClear());
 		html.find('.choo-choo-ping').on('click', () => this._onPing());
@@ -206,9 +298,9 @@ class TrainManagerApp extends Application {
 
 	async _onCreateNew() {
 		const scene = canvas.scene;
-		const newTrains = _createTrainForSelection(scene);
+		const newTrains = await _createTrainForSelection(scene);
 		if (!newTrains) {
-			ui.notifications.info('Select tokens on the canvas before creating a new train.');
+			ui.notifications.info('Select 2 or more tokens on the canvas before creating a new train.');
 			return;
 		}
 		await _setTrains(scene, newTrains);
@@ -305,4 +397,8 @@ class TrainManagerApp extends Application {
 		TrainManagerApp.instance = null;
 		return super.close(options);
 	}
+}
+
+export function openTrainManager() {
+	(TrainManagerApp.instance ||= new TrainManagerApp()).render(true);
 }
