@@ -1,20 +1,41 @@
 import * as Constants from './constants.js';
 import * as Logger from './logger.js';
+import { updateTokenIndicator } from './train-token-indicator.js';
 import { removeListItem } from './utils.js';
 
-const FLAG_TRAIN = 'train';
-const FLAG_TRAIN_ID = 'trainId';
+const FLAG_TRAIN = Constants.FLAG_TRAIN;
+const FLAG_TRAIN_ID = Constants.FLAG_TRAIN_ID;
 
-function _getTrains(scene) {
+export function getTrains(scene) {
 	return scene.getFlag(Constants.MODULE_NAME, FLAG_TRAIN) ?? [];
 }
 
-async function _setTrains(scene, trains) {
+export async function deleteTrain(scene, trains, train) {
+	const index = trains.indexOf(train);
+	if(index === -1)
+		return;
+
+	trains.splice(index, 1);
+	await setTrains(scene, trains);
+
+	for(const id of train.tokens ?? []) {
+		const token = canvas.tokens.get(id);
+		if(token) {
+			if(token.document?.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID) === train.id) {
+				await token.document.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+			}
+
+			updateTokenIndicator(trains, token);
+		}
+	}
+}
+
+export async function setTrains(scene, trains) {
 	await scene.setFlag(Constants.MODULE_NAME, FLAG_TRAIN, trains);
 	await _refreshTokenTrainFlags(scene, trains);
 }
 
-async function _clearTrains(scene) {
+export async function clearTrains(scene) {
 	await scene.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN);
 	await _refreshTokenTrainFlags(scene, []);
 }
@@ -44,6 +65,9 @@ async function _refreshTokenTrainFlags(scene, trains) {
 			updates.push(tokenDocument.setFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID, next));
 		else
 			updates.push(tokenDocument.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID));
+
+		if(token.addChild)
+			updateTokenIndicator(trains, token);
 	}
 
 	await Promise.all(updates);
@@ -53,13 +77,8 @@ function _makeTrainId() {
 	return `train-${Date.now()}-${Math.floor(Math.random() * 9999)}`;
 }
 
-function _getTrain(scene, trainId) {
-	const trains = _getTrains(scene);
-	return trains.find((t) => t.id === trainId) ?? null;
-}
-
 function _getDefaultTrainName(scene) {
-	const trains = _getTrains(scene);
+	const trains = getTrains(scene);
 	return `Train ${trains.length + 1}`;
 }
 
@@ -68,12 +87,12 @@ async function _createTrainForSelection(scene, trains, tokens) {
 	if((tokens?.length || 0) <= 1)
 		return null;
 
-	trains ||= _getTrains(scene);
+	trains ||= getTrains(scene);
 
 	const tokenIds = tokens.map((t) => t.id),
 		emptyTrains = [],
 		tasks = [];
-	let sort = tokens.length;
+	let sort = tokens.length + 1;
 
 	for(const token of tokens) {
 		const id = token.id;
@@ -84,7 +103,7 @@ async function _createTrainForSelection(scene, trains, tokens) {
 		}
 		tasks.push(token.document.update({sort: sort--}));
 	}
-	
+
 	for(const train of emptyTrains) {
 		removeListItem(trains, train);
 	}
@@ -95,7 +114,7 @@ async function _createTrainForSelection(scene, trains, tokens) {
 		id: _makeTrainId(),
 		name: _getDefaultTrainName(scene),
 		tokens: tokenIds,
-		linked: true,
+		enabled: true,
 	};
 
 	trains.push(train);
@@ -118,11 +137,11 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 		if(!trainId)
 			return;
 
-		const trains = _getTrains(canvas.scene);
+		const trains = getTrains(canvas.scene);
 		if(!trains?.length)
 			return;
 
-		const train = trains.find((t) => t.tokens?.[0] === token.id && t.linked);
+		const train = trains.find((t) => t.tokens?.[0] === token.id && t.enabled);
 		if(!train)
 			return;
 
@@ -132,7 +151,11 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 		//Bookstore 1:	Scene.gFJ0yFwUB34Fwot0.Region.RSQX9j9sxhti1SkB
 		const gridSize = canvas.grid.size;
 		const regionId = diff._regions && diff._regions[0];
-		let prevPosition = { x: token.x, y: token.y };
+		let prevPosition = {
+			x: token.x,
+			y: token.y,
+			rotation: token.rotation || 0
+		};
 		//TODO: Detect teleportation and move them all to the same position
 
 		let teleportAll;
@@ -140,7 +163,7 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 			const region = canvas.scene.regions.get(regionId);
 			if(!region) {
 				//Theoretically, moving to the trigger of the teleport should teleport them all at once
-				teleportAll = (following) => following.document.update({ x: prevPosition.x, y: prevPosition.y }, {
+				teleportAll = (following) => following.document.update(prevPosition, {
 					_chooChoo: true
 				});
 			}
@@ -167,12 +190,16 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 				continue;
 			}
 
-			const currentPos = { x: following.x, y: following.y };
+			const currentPos = {
+				x: following.x,
+				y: following.y,
+				rotation: following.rotation || following.document.rotation || 0
+			};
 			if(currentPos.x === prevPosition.x && currentPos.y === prevPosition.y)
 				continue;	// If they're in the same position, skip it this move, then catch up on the next.
 
 			const teleport = Math.abs(prevPosition.x - currentPos.x) > gridSize || Math.abs(prevPosition.y - currentPos.y) > gridSize;
-			await following.document.update({ x: prevPosition.x, y: prevPosition.y }, {
+			await following.document.update(prevPosition, {
 				 _chooChoo: true,
 				animate: !teleport
 			});
@@ -185,29 +212,41 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 
 Hooks.on('createToken', async (token, options, userId) => {
 	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
-	console.log("train.createToken", { token, options, userId, trainId });
+	if(trainId && token.parent !== canvas.scene) {
+		const trains = getTrains(canvas.scene);
+		const train = trains.find((t) => t.id === trainId);
+		if(!train)
+			return;
+
+		const targetTrains = getTrains(token.parent),
+			targetTrain = targetTrains.find((t) => t.id === trainId);
+		if(targetTrain) {
+			Object.assign(targetTrain, train);
+		}
+		else {
+			targetTrains.push(train);
+		}
+
+		setTrains(token.parent, targetTrains);
+	}
+	//console.log("train.createToken", { token, options, userId, trainId, currentScene: canvas.scene });
 });
 
-Hooks.on('deleteToken', async (token, options, userId) => {
-	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
-	console.log("train.deleteToken", { token, options, userId, trainId });
-});
+//Hooks.on('deleteToken', async (token, options, userId) => {
+//	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+//	console.log("train.deleteToken", { token, options, userId, trainId, currentScene: canvas.scene });
+//});
 
 Hooks.on('canvasReady', () => {
 	const scene = canvas.scene;
 	if(!scene)
 		return;
 
-	_refreshTokenTrainFlags(scene, _getTrains(scene));
+	_refreshTokenTrainFlags(scene, getTrains(scene));
 });
 
-Hooks.on('renderToken', (token, html) => {
-	console.log("train.renderToken", token, html);
-	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
-	if (!trainId) return;
-
-	if (html.find('.choo-choo-token-indicator').length) return;
-	html.append('<div class="choo-choo-token-indicator" title="In train"></div>');
+Hooks.on('drawToken', (token) => {
+	updateTokenIndicator(getTrains(canvas.scene), token);
 });
 
 export async function createTrain(tokens) {
@@ -217,64 +256,21 @@ export async function createTrain(tokens) {
 		return;
 	}
 
-	const trains = _getTrains(scene);
+	tokens ||= canvas.tokens.controlled;
+	if(tokens.length <= 1) {
+		ui.notifications.warn(game.i18n.localize("CHOOCHOO.SCENE.create.error"));
+		return;
+	}
+
+	const trains = getTrains(scene);
 	const newTrains = await _createTrainForSelection(scene, trains, tokens);
 	if (newTrains) {
-		await _setTrains(scene, newTrains);
+		await setTrains(scene, newTrains);
 	}
-
-	openTrainManager();
 }
 
-class TrainManagerApp extends Application {
-	static instance;
-
-	constructor(options = {}) {
-		super(options);
-		TrainManagerApp.instance = this;
-	}
-
-	static get defaultOptions() {
-		return mergeObject(super.defaultOptions, {
-			id: 'choo-choo-train',
-			title: 'Choo Choo Train Manager',
-			template: 'modules/choo-choo/templates/train.html',
-			width: 420,
-			height: 'auto',
-			classes: ['choo-choo', 'sheet'],
-			resizable: true,
-		});
-	}
-
-	getData() {
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		const selectedId = this._selectedId || (trains[0]?.id ?? null);
-		const selectedTrain = selectedId ? _getTrain(scene, selectedId) : null;
-
-		const tokenOptions = (canvas.tokens.controlled ?? [])
-			.map((t) => ({ id: t.id, name: t.name }))
-			.slice(0, 20);
-
-		const tokens = (selectedTrain?.tokens ?? [])
-			.map((id) => canvas.tokens.get(id))
-			.filter(Boolean)
-			.map((token) => ({
-				id: token.id,
-				name: token.name,
-				img: token.document.texture.src,
-			}));
-
-		return {
-			trains,
-			selectedTrain,
-			selectedId,
-			tokens,
-			tokenOptions,
-			hasTrains: trains.length > 0,
-			hasSelection: tokenOptions.length > 0,
-		};
-	}
+/*
+class TrainManagerApp extends foundry.applications.api.ApplicationV2 {
 
 	activateListeners(html) {
 		super.activateListeners(html);
@@ -290,87 +286,10 @@ class TrainManagerApp extends Application {
 		list.sortable({
 			handle: '.handle',
 			update: () => this._onOrderChanged(html),
-		});*/
+		});* /
 
 		html.find('.choo-choo-clear').on('click', () => this._onClear());
 		html.find('.choo-choo-ping').on('click', () => this._onPing());
-	}
-
-	async _onCreateNew() {
-		const scene = canvas.scene;
-		const newTrains = await _createTrainForSelection(scene);
-		if (!newTrains) {
-			ui.notifications.info('Select 2 or more tokens on the canvas before creating a new train.');
-			return;
-		}
-		await _setTrains(scene, newTrains);
-		this._selectedId = newTrains[newTrains.length - 1].id;
-		this.render(true);
-	}
-
-	async _onDelete() {
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		if (!trains.length) return;
-
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const remaining = trains.filter((t) => t.id !== selectedId);
-		await _setTrains(scene, remaining);
-		this._selectedId = remaining[0]?.id ?? null;
-		this.render(true);
-	}
-
-	async _onRename(event) {
-		const name = event.target.value.trim();
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if (!train) return;
-		train.name = name || train.name;
-		await _setTrains(scene, trains);
-		this.render(true);
-	}
-
-	async _onToggleLink(event) {
-		const linked = event.target.checked;
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if (!train) return;
-		train.linked = linked;
-		await _setTrains(scene, trains);
-		this.render(true);
-	}
-
-	async _onSelectTrain(event) {
-		this._selectedId = event.target.value;
-		this.render(true);
-	}
-
-	async _onOrderChanged(html) {
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if (!train) return;
-
-		const ids = html
-			.find('#choo-choo-train-list li')
-			.toArray()
-			.map((li) => li.dataset.id)
-			.filter(Boolean);
-
-		train.tokens = ids;
-		await _setTrains(scene, trains);
-		this.render(true);
-	}
-
-	async _onClear() {
-		const scene = canvas.scene;
-		await _clearTrains(scene);
-		this.close();
 	}
 
 	async _onPing() {
@@ -392,13 +311,4 @@ class TrainManagerApp extends Application {
 			duration: 250,
 		});
 	}
-
-	close(options) {
-		TrainManagerApp.instance = null;
-		return super.close(options);
-	}
-}
-
-export function openTrainManager() {
-	(TrainManagerApp.instance ||= new TrainManagerApp()).render(true);
-}
+}*/

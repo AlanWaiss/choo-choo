@@ -10,8 +10,8 @@
         {{/each}}
       </select>
     </label>
-    <button type="button" class="button choo-choo-create" title="Create a new train from currently selected tokens">New Train</button>
-    <button type="button" class="button choo-choo-delete" title="Remove the selected train">Delete</button>
+    <button type="button" class="button" data-action="createTrain" title="Create a new train from currently selected tokens">New Train</button>
+    <button type="button" class="button" data-action="deleteTrain" title="Remove the selected train">Delete</button>
   </div>
 
   {{#if hasTrains}}
@@ -22,8 +22,8 @@
       </label>
 
       <label class="choo-choo-link-wrap">
-        <input class="choo-choo-link" type="checkbox" {{#if selectedTrain.linked}}checked{{/if}} />
-        Linked (move leader → followers follow)
+        <input class="choo-choo-link" type="checkbox" {{#if selectedTrain.enabled}}checked{{/if}} />
+        Enabled (move leader → followers follow)
       </label>
     </div>
 
@@ -42,8 +42,8 @@
     {{/if}}
 
     <div class="choo-choo-actions">
-      <button type="button" class="button choo-choo-ping">Ping Leader</button>
-      <button type="button" class="button choo-choo-clear">Clear All Trains</button>
+      <button type="button" class="button" data-action="panToLeader">Pan to Leader</button>
+      <button type="button" class="button" data-action="clearTrains">Clear All Trains</button>
     </div>
   {{else}}
     <p class="choo-choo-empty">No trains exist yet. Select tokens on the canvas and click “New Train”.</p>

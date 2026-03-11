@@ -1,4 +1,24 @@
 
 {
-  "full-screen.UI.Label": "Toggle Full Screen"
+  "CHOOCHOO": {
+    "SCENE": {
+      "title": "Choo Choo Trains",
+      "clear": {
+        "label": "Clear Trains",
+        "confirm": "Are you sure you want to clear all trains from this scene?"
+      },
+      "create": {
+        "error": "Select 2 or more tokens before creating a new train.",
+        "label": "Create Train"
+      },
+      "manage": {
+        "label": "Manage Trains"
+      }
+    },
+    "WIN": {
+      "LABELS": {
+        "NAME": "Name"
+      }
+    }
+  }
 }

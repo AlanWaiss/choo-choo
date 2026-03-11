@@ -1,11 +1,5 @@
-.choo-choo-train {
-  padding: 0.75rem;
-  font-size: 0.9rem;
-}
-
 .choo-choo-instructions {
   margin: 0 0 0.5rem;
-  font-size: 0.85rem;
   opacity: 0.85;
 }
 
@@ -59,6 +53,10 @@
   padding: 0.35rem 0.4rem;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   cursor: grab;
+}
+
+.choo-choo-list li.dragging {
+  opacity: 0.5;
 }
 
 .choo-choo-list li:last-child {
