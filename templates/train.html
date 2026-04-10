@@ -11,6 +11,7 @@
       </select>
     </label>
     <button type="button" class="button" data-action="createTrain" title="Create a new train from currently selected tokens">New Train</button>
+    <button type="button" class="button" data-action="addTokens" title="Add currently selected tokens to the selected train">Add Tokens</button>
     <button type="button" class="button" data-action="deleteTrain" title="Remove the selected train">Delete</button>
   </div>
 
@@ -21,9 +22,14 @@
         <input class="choo-choo-name" type="text" value="{{selectedTrain.name}}" />
       </label>
 
-      <label class="choo-choo-link-wrap">
-        <input class="choo-choo-link" type="checkbox" {{#if selectedTrain.enabled}}checked{{/if}} />
+      <label class="choo-choo-check-wrap">
+        <input class="choo-choo-check" type="checkbox" data-prop="enabled" {{#if selectedTrain.enabled}}checked{{/if}} />
         Enabled (move leader → followers follow)
+      </label>
+
+      <label class="choo-choo-check-wrap">
+        <input class="choo-choo-check" type="checkbox" data-prop="moveTogether" {{#if selectedTrain.moveTogether}}checked{{/if}} />
+        Move Together
       </label>
     </div>
 
@@ -34,6 +40,9 @@
             <span class="handle" title="Drag to reorder"><i class="fas fa-grip-lines"></i></span>
             <img src="{{this.img}}" alt="{{this.name}}" />
             <span class="name">{{this.name}}</span>
+            <button type="button" class="button" data-action="removeToken" title="Remove from train">
+              <i class="fas fa-times"></i>
+            </button>
           </li>
         {{/each}}
       </ul>

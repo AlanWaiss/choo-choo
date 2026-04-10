@@ -1,5 +1,5 @@
 import { updateTokenIndicator } from './train-token-indicator.js';
-import { clearTrains, createTrain, deleteTrain, getTrains, setTrains } from './train.js';
+import { clearTrains, createTrain, deleteTrain, getTrains, removeTokenFromTain, setTrains } from './train.js';
 import { removeListItem } from './utils.js';
 
 const { ApplicationV2, HandlebarsApplicationMixin } = foundry.applications.api;
@@ -8,14 +8,33 @@ function _getTrain(trains, trainId) {
 	return trains.find((t) => t.id === trainId) ?? null;
 }
 
+async function updateTrainTokens(trains, trainTokenIds, positions) {
+	positions ||= [];
+	const tasks = [];
+	let sort = trainTokenIds.length + 1;
+	for(let i = 0; i < trainTokenIds.length; i++) {
+		const id = trainTokenIds[i];
+		const token = canvas.tokens.get(id);
+		if(!token)
+			continue;
+
+		tasks.push(token.document.update(Object.assign(positions[i] ?? {}, {sort: sort--}), {animate: false}));
+		updateTokenIndicator(trains, token);
+	}
+
+	await Promise.all(tasks);
+}
+
 class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 	static instance = null;
 	static DEFAULT_OPTIONS = {
 		actions: {
+			addTokens: TrainManagerApp.addTokensClick,
 			clearTrains: TrainManagerApp.clearClick,
 			createTrain: TrainManagerApp.createClick,
 			deleteTrain: TrainManagerApp.deleteClick,
 			panToLeader: TrainManagerApp.panClick,
+			removeToken: TrainManagerApp.removeTokenClick
 		},
 		dragDrop: [
 			{
@@ -24,6 +43,8 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 			}
 		],
 		position: {
+			left: 100,
+			top: 100,
 			width: 420
 		},
 		window: {
@@ -38,35 +59,48 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		}
 	}
 
+	static async addTokensClick() {
+		const { selectedTrain, trains } = this.getSelected();
+		if(!selectedTrain)
+			return;
+
+		const tokenIds = canvas.tokens.controlled.map((t) => t.id);
+		if(!selectedTrain.tokens)
+			selectedTrain.tokens = tokenIds;
+		else {
+			for(const id of tokenIds) {
+				if(!selectedTrain.tokens.includes(id))
+					selectedTrain.tokens.push(id);
+			}
+		}
+
+		await setTrains(canvas.scene, trains);
+		this.render(true);
+
+		await updateTrainTokens(trains, selectedTrain.tokens, []);
+	}
+
 	static async clearClick() {
 		await clearTrains(canvas.scene);
 		this.close();
 	}
 
-	static createClick() {
-		createTrain();
+	static async createClick() {
+		await createTrain();
+		this.render(true);
 	}
 
 	static async deleteClick() {
-		const selectedId = this._selectedId;
-		if(!selectedId)
-			return;
-
-		const trains = getTrains(canvas.scene);
-		const selectedTrain = _getTrain(trains, selectedId);
+		const { selectedTrain, trains } = this.getSelected();
 		if(!selectedTrain)
 			return;
 
 		await deleteTrain(canvas.scene, trains, selectedTrain);
+		this.render(true);
 	}
 
 	static async panClick() {
-		const selectedId = this._selectedId;
-		if(!selectedId)
-			return;
-
-		const trains = getTrains(canvas.scene);
-		const selectedTrain = _getTrain(trains, selectedId);
+		const { selectedTrain } = this.getSelected();
 		if(!selectedTrain)
 			return;
 
@@ -81,6 +115,21 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 				break;
 			}
 		}
+	}
+
+	static async removeTokenClick(event) {
+		const tokenId = event.target.closest('li[data-id]')?.dataset?.id;
+		if(!tokenId)
+			return;
+
+		const { selectedTrain, trains } = this.getSelected();
+		if(!selectedTrain)
+			return;
+
+		await removeTokenFromTain(trains, selectedTrain, tokenId);
+		this.render(true);
+
+		await updateTrainTokens(trains, selectedTrain.tokens, []);
 	}
 
 	constructor(options = {}) {
@@ -141,6 +190,21 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		return true;
 	}
 
+	getSelected() {
+		const trains = getTrains(canvas.scene);
+		const selectedId = this._selectedId ||= (trains[0]?.id ?? null);
+		if(!selectedId)
+			return {
+				trains
+			};
+
+		return {
+			selectedId,
+			selectedTrain: _getTrain(trains, selectedId),
+			trains
+		};
+	}
+
 
 	/**
 	 * Callback actions which occur at the beginning of a drag start workflow.
@@ -190,9 +254,7 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		if(li.dataset.id === parsed.id)
 			return;
 
-		const trains = getTrains(canvas.scene);
-		const selectedId = this._selectedId ||= (trains[0]?.id ?? null);
-		const selectedTrain = selectedId ? _getTrain(trains, selectedId) : null;
+		const { selectedTrain, trains } = this.getSelected();
 		if(!selectedTrain)
 			return;
 
@@ -209,8 +271,7 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		}
 
 		removeListItem(trainTokenIds, parsed.id);
-		const index = trainTokenIds.indexOf(li.dataset.id),
-			tasks = [];
+		const index = trainTokenIds.indexOf(li.dataset.id);
 		if(index === -1) {
 			trainTokenIds.push(parsed.id);
 		}
@@ -219,28 +280,15 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		}
 
 		setTrains(canvas.scene, trains);
-
-		let sort = trainTokenIds.length + 1;
-		for(let i = 0; i < trainTokenIds.length; i++) {
-			const id = trainTokenIds[i];
-			const token = canvas.tokens.get(id);
-			if(!token)
-				continue;
-
-			tasks.push(token.document.update(Object.assign(positions[i] ?? {}, {sort: sort--}), {animate: false}));
-			updateTokenIndicator(trains, token);
-		}
 		
 		this.render(true);
 
-		await Promise.all(tasks);
+		await updateTrainTokens(trains, trainTokenIds, positions);
 	}
 	//END dragDrop
 
 	async _prepareContext(options) {
-		const trains = getTrains(canvas.scene);
-		const selectedId = this._selectedId ||= (trains[0]?.id ?? null);
-		const selectedTrain = selectedId ? _getTrain(trains, selectedId) : null;
+		const { selectedId, selectedTrain, trains } = this.getSelected();
 
 		const tokenOptions = (canvas.tokens.controlled ?? [])
 			.map((t) => ({ id: t.id, name: t.name }))
@@ -271,7 +319,7 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		//html.find('.choo-choo-create').on('click', () => this._onCreateNew());
 		//html.find('.choo-choo-delete').on('click', () => this._onDelete());
 		html.find('.choo-choo-name').on('change', (event) => this._onRename(event));
-		html.find('.choo-choo-link').on('change', (event) => this._onToggleEnabled(event));
+		html.find('.choo-choo-check').on('change', (event) => this._onToggleProp(event));
 
 		html.find('#choo-choo-train-select').on('change', (event) => this._onSelectTrain(event));
 
@@ -293,16 +341,14 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 	}
 
 	async _onRename(event) {
-		const name = event.target.value.trim();
-		const scene = canvas.scene;
-		const trains = getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if(!train)
+		const {selectedTrain, trains} = this.getSelected();
+		if(!selectedTrain)
 			return;
 
-		train.name = name || train.name;
-		await setTrains(scene, trains);
+		const name = event.target.value.trim();
+
+		selectedTrain.name = name || selectedTrain.name;
+		await setTrains(canvas.scene, trains);
 		this.render(true);
 	}
 
@@ -311,17 +357,18 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 		this.render(true);
 	}
 
-	async _onToggleEnabled(event) {
-		const enabled = event.target.checked;
-		const scene = canvas.scene;
-		const trains = getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if(!train)
+	async _onToggleProp(event) {
+		const isSelected = event.target.checked;
+		const {selectedTrain, trains} = this.getSelected();
+		if(!selectedTrain)
 			return;
 
-		train.enabled = enabled;
-		await setTrains(scene, trains);
+		const prop = event.target.dataset.prop;
+		if(prop) {
+			selectedTrain[prop] = isSelected;
+		}
+		
+		await setTrains(canvas.scene, trains);
 		this.render(true);
 	}
 }

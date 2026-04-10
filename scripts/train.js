@@ -17,17 +17,30 @@ export async function deleteTrain(scene, trains, train) {
 
 	trains.splice(index, 1);
 	await setTrains(scene, trains);
+	const tasks = [];
 
 	for(const id of train.tokens ?? []) {
-		const token = canvas.tokens.get(id);
-		if(token) {
-			if(token.document?.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID) === train.id) {
-				await token.document.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
-			}
-
-			updateTokenIndicator(trains, token);
-		}
+		tasks.push(_removeTokenFromTain(trains, train, id));
 	}
+
+	await Promise.all(tasks);
+}
+
+async function _removeTokenFromTain(trains, train, tokenId) {
+	const token = canvas.tokens.get(tokenId);
+	if(token) {
+		if(token.document?.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID) === train.id) {
+			await token.document.unsetFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
+		}
+
+		updateTokenIndicator(trains, token);
+	}
+}
+
+export async function removeTokenFromTain(trains, train, tokenId) {
+	removeListItem(train.tokens, tokenId);
+	await _removeTokenFromTain(trains, train, tokenId);
+	await setTrains(canvas.scene, trains);
 }
 
 export async function setTrains(scene, trains) {
@@ -115,19 +128,21 @@ async function _createTrainForSelection(scene, trains, tokens) {
 		name: _getDefaultTrainName(scene),
 		tokens: tokenIds,
 		enabled: true,
+		moveTogether: false,
 	};
 
 	trains.push(train);
 	return trains;
 }
 
+//Only attach to these hooks if you're the GM
 /**
  * Move the tokens in a train when the leader moves.
  * The leader is always the first token in the train's `tokens` array.
  */
 Hooks.on('updateToken', async (token, diff, options, userId) => {
 	try {
-		if(options?._chooChoo)
+		if(options?._chooChoo || !game.user.isGM)
 			return; // Avoid recursion while moving trailing tokens
 
 		if("number" !== typeof diff.x && "number" !== typeof diff.y)
@@ -156,6 +171,17 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 			y: token.y,
 			rotation: token.rotation || 0
 		};
+
+		function moveTogether(animate = true) {
+			const newPosition = {
+				x: "number" === typeof diff.x ? diff.x : token.x,
+				y: "number" === typeof diff.y ? diff.y : token.y,
+			};
+			teleportAll = (following) => following.document.update(newPosition, {
+				_chooChoo: true,
+				animate: animate
+			});
+		}
 		//TODO: Detect teleportation and move them all to the same position
 
 		let teleportAll;
@@ -167,16 +193,12 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 					_chooChoo: true
 				});
 			}
-			else if(region.behaviors.find((behavior) => behavior.type === "teleportToken" && !behavior.disabled)) {
-				const newPosition = {
-					x: "number" === typeof diff.x ? diff.x : token.x,
-					y: "number" === typeof diff.y ? diff.y : token.y,
-				};
-				teleportAll = (following) => following.document.update(newPosition, {
-					_chooChoo: true,
-					animate: false
-				});
+			else if(train.moveTogether || region.behaviors.find((behavior) => behavior.type === "teleportToken" && !behavior.disabled)) {
+				moveTogether(false);
 			}
+		}
+		else if(train.moveTogether) {
+			moveTogether();
 		}
 
 		for(let i = 1; i < train.tokens.length; i++) {
@@ -200,7 +222,7 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 
 			const teleport = Math.abs(prevPosition.x - currentPos.x) > gridSize || Math.abs(prevPosition.y - currentPos.y) > gridSize;
 			await following.document.update(prevPosition, {
-				 _chooChoo: true,
+				_chooChoo: true,
 				animate: !teleport
 			});
 			prevPosition = currentPos;
@@ -211,6 +233,9 @@ Hooks.on('updateToken', async (token, diff, options, userId) => {
 });
 
 Hooks.on('createToken', async (token, options, userId) => {
+	if(!game.user.isGM)
+		return;
+
 	const trainId = token.getFlag(Constants.MODULE_NAME, FLAG_TRAIN_ID);
 	if(trainId && token.parent !== canvas.scene) {
 		const trains = getTrains(canvas.scene);
@@ -238,6 +263,9 @@ Hooks.on('createToken', async (token, options, userId) => {
 //});
 
 Hooks.on('canvasReady', () => {
+	if(!game.user.isGM)
+		return;
+
 	const scene = canvas.scene;
 	if(!scene)
 		return;
@@ -268,47 +296,3 @@ export async function createTrain(tokens) {
 		await setTrains(scene, newTrains);
 	}
 }
-
-/*
-class TrainManagerApp extends foundry.applications.api.ApplicationV2 {
-
-	activateListeners(html) {
-		super.activateListeners(html);
-
-		html.find('.choo-choo-create').on('click', () => this._onCreateNew());
-		html.find('.choo-choo-delete').on('click', () => this._onDelete());
-		html.find('.choo-choo-name').on('change', (event) => this._onRename(event));
-		html.find('.choo-choo-link').on('change', (event) => this._onToggleLink(event));
-
-		html.find('#choo-choo-train-select').on('change', (event) => this._onSelectTrain(event));
-
-		/*const list = html.find('#choo-choo-train-list');
-		list.sortable({
-			handle: '.handle',
-			update: () => this._onOrderChanged(html),
-		});* /
-
-		html.find('.choo-choo-clear').on('click', () => this._onClear());
-		html.find('.choo-choo-ping').on('click', () => this._onPing());
-	}
-
-	async _onPing() {
-		const scene = canvas.scene;
-		const trains = _getTrains(scene);
-		const selectedId = this._selectedId ?? trains[0]?.id;
-		const train = trains.find((t) => t.id === selectedId);
-		if (!train?.tokens?.length) return;
-
-		const tokens = train.tokens
-			.map((id) => canvas.tokens.get(id))
-			.filter(Boolean);
-
-		if (!tokens.length) return;
-
-		canvas.animatePan({
-			x: tokens[0].x + tokens[0].w / 2 - canvas.app.renderer.width / 2,
-			y: tokens[0].y + tokens[0].h / 2 - canvas.app.renderer.height / 2,
-			duration: 250,
-		});
-	}
-}*/
