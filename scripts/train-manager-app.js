@@ -87,7 +87,11 @@ class TrainManagerApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
 	static async createClick() {
 		await createTrain();
-		this.render(true);
+		const app = this;
+		if("function" === typeof app?.render) {
+			app.render(true);
+			setTimeout(() => app.render(true), 500);
+		}
 	}
 
 	static async deleteClick() {
